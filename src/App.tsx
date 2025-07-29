@@ -3,6 +3,7 @@ import Login from './components/auth/Login';
 import Dashboard from './components/dashboard/Dashboard';
 import Header from './components/layout/Header';
 import ConfigurationSetup from './components/setup/ConfigurationSetup';
+import Settings from './components/settings/Settings';
 import { User } from './types/auth';
 
 const App: React.FC = () => {
@@ -10,6 +11,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isConfigured, setIsConfigured] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     initializeApp();
@@ -17,7 +19,7 @@ const App: React.FC = () => {
     // Listen for menu events
     if (window.electronAPI) {
       window.electronAPI.on('menu-settings', () => {
-        setShowConfig(true);
+        setShowSettings(true);
       });
     }
     
@@ -102,6 +104,10 @@ const App: React.FC = () => {
     await initializeApp();
   };
 
+  const handleSettingsClose = () => {
+    setShowSettings(false);
+  };
+
   if (loading) {
     return (
       <div className="app">
@@ -132,9 +138,15 @@ const App: React.FC = () => {
       <Header 
         user={user} 
         onLogout={handleLogout}
-        onShowConfig={() => setShowConfig(true)}
+        onShowSettings={() => setShowSettings(true)}
       />
       <Dashboard user={user} />
+      {showSettings && (
+        <Settings 
+          user={user} 
+          onClose={handleSettingsClose}
+        />
+      )}
     </div>
   );
 };

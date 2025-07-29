@@ -343,6 +343,56 @@ class MainWindow {
       }
     });
 
+    ipcMain.handle('airtable:create-initial-tables', async () => {
+      try {
+        const { airtableService } = require('../src/services/AirtableService');
+        return await airtableService.createInitialTables();
+      } catch (error) {
+        console.error('Create initial tables error:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    ipcMain.handle('airtable:create-client-asset-table', async (event, { clientName }) => {
+      try {
+        const { airtableService } = require('../src/services/AirtableService');
+        return await airtableService.createClientAssetTable(clientName);
+      } catch (error) {
+        console.error('Create client asset table error:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    ipcMain.handle('airtable:add-field-to-table', async (event, { tableName, fieldDefinition }) => {
+      try {
+        const { airtableService } = require('../src/services/AirtableService');
+        return await airtableService.addFieldToTable(tableName, fieldDefinition);
+      } catch (error) {
+        console.error('Add field to table error:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    ipcMain.handle('airtable:update-table-name', async (event, { oldName, newName }) => {
+      try {
+        const { airtableService } = require('../src/services/AirtableService');
+        return await airtableService.updateTableName(oldName, newName);
+      } catch (error) {
+        console.error('Update table name error:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    ipcMain.handle('airtable:get-companies', async () => {
+      try {
+        const { airtableService } = require('../src/services/AirtableService');
+        return await airtableService.getCompanies();
+      } catch (error) {
+        console.error('Get companies error:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
     // App info
     ipcMain.handle('app:get-version', () => {
       return app.getVersion();

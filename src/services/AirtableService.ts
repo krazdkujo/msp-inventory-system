@@ -386,6 +386,420 @@ class AirtableService {
     return fields;
   }
 
+  // Table Management with Meta API
+  public async createInitialTables(): Promise<{ success: boolean; error?: string; tables?: string[] }> {
+    try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
+      
+      const pat = configService.getAirtablePAT();
+      const baseId = configService.getAirtableBaseId();
+      
+      if (!pat || !baseId) {
+        return { success: false, error: 'Airtable credentials not configured' };
+      }
+
+      // Create Companies table (this tracks which companies exist, each gets their own asset table)
+      const companiesTableResult = await this.createTable('Companies', [
+        this.createFieldDefinition('Company Name', 'singleLineText'),
+        this.createFieldDefinition('Asset Table Name', 'singleLineText'),
+        this.createFieldDefinition('Description', 'multilineText'),
+        this.createFieldDefinition('Contact Email', 'email'),
+        this.createFieldDefinition('Contact Phone', 'phoneNumber'),
+        this.createFieldDefinition('Address', 'multilineText'),
+        this.createFieldDefinition('Is Active', 'checkbox'),
+        this.createFieldDefinition('Created Date', 'createdTime'),
+        this.createFieldDefinition('Last Scan Date', 'dateTime'),
+        this.createFieldDefinition('Asset Count', 'number', { precision: 0 }),
+        this.createFieldDefinition('Notes', 'multilineText')
+      ]);
+
+      if (!companiesTableResult.success) {
+        return { success: false, error: `Failed to create Companies table: ${companiesTableResult.error}` };
+      }
+
+      // Create Users table (separate from companies - users can access multiple companies)
+      const usersTableResult = await this.createTable('Users', [
+        this.createFieldDefinition('Username', 'singleLineText'),
+        this.createFieldDefinition('Email', 'email'),
+        this.createFieldDefinition('Full Name', 'singleLineText'),
+        this.createFieldDefinition('Role', 'singleSelect', {
+          choices: [
+            { name: 'admin' },
+            { name: 'technician' },
+            { name: 'viewer' }
+          ]
+        }),
+        this.createFieldDefinition('Is Active', 'checkbox'),
+        this.createFieldDefinition('Created Date', 'createdTime'),
+        this.createFieldDefinition('Last Login', 'dateTime'),
+        this.createFieldDefinition('Phone', 'phoneNumber'),
+        this.createFieldDefinition('Department', 'singleLineText'),
+        this.createFieldDefinition('Company Access', 'multilineText')
+      ]);
+
+      if (!usersTableResult.success) {
+        return { success: false, error: `Failed to create Users table: ${usersTableResult.error}` };
+      }
+
+      return { 
+        success: true, 
+        tables: ['Companies', 'Users']
+      };
+    } catch (error) {
+      console.error('Failed to create initial tables:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error creating tables'
+      };
+    }
+  }
+
+  private createFieldDefinition(name: string, type: string, options?: any): any {
+    // Start with minimal field definition
+    const field: any = { name, type };
+    
+    // Add options based on field type requirements
+    if (type === 'singleSelect' || type === 'multipleSelects') {
+      if (options && options.choices) {
+        field.options = options;
+      }
+    } else if (type === 'number' && options && options.precision !== undefined) {
+      field.options = options;
+    } else if (type === 'currency' && options) {
+      field.options = options;
+    } else if (type === 'checkbox') {
+      // Checkbox fields REQUIRE options with color and icon
+      field.options = {
+        color: options?.color || 'greenBright',
+        icon: options?.icon || 'check'
+      };
+    }
+    
+    return field;
+  }
+
+  private async ensureCompaniesTableExists(): Promise<void> {
+    try {
+      // Try to access the Companies table to see if it exists
+      await this.base!('Companies').select({ maxRecords: 1 }).firstPage();
+      console.log('Companies table already exists');
+    } catch (error: any) {
+      if (error.statusCode === 404 || error.statusCode === 403) {
+        console.log('Companies table does not exist, creating it...');
+        
+        // Create the Companies table
+        const result = await this.createTable('Companies', [
+          this.createFieldDefinition('Company Name', 'singleLineText'),
+          this.createFieldDefinition('Asset Table Name', 'singleLineText'),
+          this.createFieldDefinition('Description', 'multilineText'),
+          this.createFieldDefinition('Contact Email', 'email'),
+          this.createFieldDefinition('Contact Phone', 'phoneNumber'),
+          this.createFieldDefinition('Address', 'multilineText'),
+          this.createFieldDefinition('Is Active', 'checkbox'),
+          this.createFieldDefinition('Created Date', 'createdTime'),
+          this.createFieldDefinition('Last Scan Date', 'dateTime'),
+          this.createFieldDefinition('Asset Count', 'number', { precision: 0 }),
+          this.createFieldDefinition('Notes', 'multilineText')
+        ]);
+        
+        if (!result.success) {
+          throw new Error(`Failed to create Companies table: ${result.error}`);
+        }
+        
+        console.log('Companies table created successfully');
+      } else {
+        throw error; // Re-throw other errors
+      }
+    }
+  }
+
+  private async createTable(name: string, fields: any[]): Promise<{ success: boolean; error?: string; tableId?: string }> {
+    try {
+      const pat = configService.getAirtablePAT();
+      const baseId = configService.getAirtableBaseId();
+      
+      if (!pat || !baseId) {
+        return { success: false, error: 'Airtable credentials not configured' };
+      }
+
+      // Log the exact payload being sent
+      const payload = {
+        name: name,
+        fields: fields
+      };
+      console.log(`Creating table "${name}" with payload:`, JSON.stringify(payload, null, 2));
+
+      // Use Airtable's Meta API to create table
+      const response = await fetch(`https://api.airtable.com/v0/meta/bases/${baseId}/tables`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${pat}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // If table already exists, that's actually success
+        if (response.status === 422 && (errorData as any)?.error?.type === 'TABLE_NAME_ALREADY_EXISTS') {
+          return { success: true, error: `Table "${name}" already exists` };
+        }
+        
+        return { 
+          success: false, 
+          error: (errorData as any)?.error?.message || `HTTP ${response.status}: ${response.statusText}` 
+        };
+      }
+
+      const result = await response.json();
+      return { success: true, tableId: (result as any).id };
+    } catch (error) {
+      console.error(`Failed to create table ${name}:`, error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  public async createClientAssetTable(clientName: string): Promise<{ success: boolean; error?: string; tableName?: string }> {
+    try {
+      const tableName = this.generateTableName(clientName);
+      
+      // First, ensure the Companies table exists
+      await this.ensureCompaniesTableExists();
+      
+      // Create the asset table for this client
+      const result = await this.createTable(tableName, [
+        this.createFieldDefinition('Asset Tag', 'singleLineText'),
+        this.createFieldDefinition('Serial Number', 'singleLineText'),
+        this.createFieldDefinition('Make', 'singleLineText'),
+        this.createFieldDefinition('Model', 'singleLineText'),
+        this.createFieldDefinition('Asset Type', 'singleSelect', { 
+          choices: [
+            { name: 'Desktop' },
+            { name: 'Laptop' },
+            { name: 'Server' },
+            { name: 'Monitor' },
+            { name: 'Printer' },
+            { name: 'Network Equipment' },
+            { name: 'Mobile Device' },
+            { name: 'Software License' },
+            { name: 'Other' }
+          ]
+        }),
+        this.createFieldDefinition('Location', 'singleLineText'),
+        this.createFieldDefinition('Assigned User', 'singleLineText'),
+        this.createFieldDefinition('Purchase Date', 'date'),
+        this.createFieldDefinition('Warranty Expiration', 'date'),
+        this.createFieldDefinition('Status', 'singleSelect', {
+          choices: [
+            { name: 'Active' },
+            { name: 'Retired' },
+            { name: 'In Repair' },
+            { name: 'Missing' },
+            { name: 'Disposed' }
+          ]
+        }),
+        this.createFieldDefinition('Purchase Price', 'currency', { precision: 2 }),
+        this.createFieldDefinition('Vendor', 'singleLineText'),
+        this.createFieldDefinition('Notes', 'multilineText'),
+        this.createFieldDefinition('Created Date', 'createdTime'),
+        this.createFieldDefinition('Created User', 'singleLineText'),
+        this.createFieldDefinition('Last Modified Date', 'lastModifiedTime'),
+        this.createFieldDefinition('Last Modified User', 'singleLineText')
+      ]);
+
+      if (result.success) {
+        // Add this company to the Companies table
+        try {
+          await this.base!('Companies').create({
+            'Company Name': clientName,
+            'Asset Table Name': tableName,
+            'Description': `Asset tracking for ${clientName}`,
+            'Is Active': true,
+            'Asset Count': 0,
+            'Notes': `Auto-created company record for ${clientName}`
+          });
+        } catch (companyError) {
+          console.warn('Failed to add company to Companies table:', companyError);
+          // Don't fail the whole operation if we can't add to Companies table
+        }
+        
+        return { success: true, tableName };
+      } else {
+        return { success: false, error: result.error };
+      }
+    } catch (error) {
+      console.error('Failed to create client asset table:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  public async addFieldToTable(tableName: string, fieldDefinition: any): Promise<{ success: boolean; error?: string }> {
+    try {
+      const pat = configService.getAirtablePAT();
+      const baseId = configService.getAirtableBaseId();
+      
+      if (!pat || !baseId) {
+        return { success: false, error: 'Airtable credentials not configured' };
+      }
+
+      // First, get the table ID
+      const tablesResponse = await fetch(`https://api.airtable.com/v0/meta/bases/${baseId}/tables`, {
+        headers: {
+          'Authorization': `Bearer ${pat}`
+        }
+      });
+
+      if (!tablesResponse.ok) {
+        return { success: false, error: 'Failed to fetch table information' };
+      }
+
+      const tablesData = await tablesResponse.json();
+      const table = (tablesData as any).tables.find((t: any) => t.name === tableName);
+      
+      if (!table) {
+        return { success: false, error: `Table "${tableName}" not found` };
+      }
+
+      // Add the field using Meta API
+      const response = await fetch(`https://api.airtable.com/v0/meta/bases/${baseId}/tables/${table.id}/fields`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${pat}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(fieldDefinition)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        return { 
+          success: false, 
+          error: (errorData as any)?.error?.message || `HTTP ${response.status}: ${response.statusText}` 
+        };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to add field to table:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  public async updateTableName(oldName: string, newName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const pat = configService.getAirtablePAT();
+      const baseId = configService.getAirtableBaseId();
+      
+      if (!pat || !baseId) {
+        return { success: false, error: 'Airtable credentials not configured' };
+      }
+
+      // Get the table ID
+      const tablesResponse = await fetch(`https://api.airtable.com/v0/meta/bases/${baseId}/tables`, {
+        headers: {
+          'Authorization': `Bearer ${pat}`
+        }
+      });
+
+      if (!tablesResponse.ok) {
+        return { success: false, error: 'Failed to fetch table information' };
+      }
+
+      const tablesData = await tablesResponse.json();
+      const table = (tablesData as any).tables.find((t: any) => t.name === oldName);
+      
+      if (!table) {
+        return { success: false, error: `Table "${oldName}" not found` };
+      }
+
+      // Update the table name
+      const response = await fetch(`https://api.airtable.com/v0/meta/bases/${baseId}/tables/${table.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${pat}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: newName
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        return { 
+          success: false, 
+          error: (errorData as any)?.error?.message || `HTTP ${response.status}: ${response.statusText}` 
+        };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to update table name:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  public async getCompanies(): Promise<{ success: boolean; companies?: any[]; error?: string }> {
+    try {
+      this.ensureInitialized();
+      
+      // First check if Companies table exists by trying to access it
+      try {
+        const records = await this.base!('Companies')
+          .select({
+            fields: ['Company Name', 'Asset Table Name', 'Description', 'Contact Email', 'Contact Phone', 'Is Active', 'Created Date', 'Last Scan Date', 'Asset Count'],
+            filterByFormula: '{Is Active} = TRUE()',
+            sort: [{ field: 'Company Name', direction: 'asc' }]
+          })
+          .all();
+
+        const companies = records.map(record => ({
+          id: record.id,
+          name: record.fields['Company Name'],
+          tableName: record.fields['Asset Table Name'],
+          description: record.fields['Description'],
+          contactEmail: record.fields['Contact Email'],
+          contactPhone: record.fields['Contact Phone'],
+          isActive: record.fields['Is Active'],
+          createdAt: record.fields['Created Date'],
+          lastScanDate: record.fields['Last Scan Date'],
+          assetCount: record.fields['Asset Count'] || 0
+        }));
+
+        return { success: true, companies };
+      } catch (tableError: any) {
+        // If Companies table doesn't exist (404) or access denied (403), return empty list
+        if (tableError.statusCode === 404 || tableError.statusCode === 403) {
+          console.log('Companies table does not exist yet, returning empty list');
+          return { success: true, companies: [] };
+        }
+        throw tableError; // Re-throw other errors
+      }
+    } catch (error) {
+      console.error('Failed to fetch companies:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to fetch companies'
+      };
+    }
+  }
+
   // Validation and testing
   public async testConnection(): Promise<{ success: boolean; error?: string; tables?: string[] }> {
     try {

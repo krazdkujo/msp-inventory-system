@@ -9,6 +9,9 @@ interface Client {
   lastScanDate?: Date;
   status: 'active' | 'inactive';
   createdAt: Date;
+  tableName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
 }
 
 interface ClientListProps {
@@ -20,37 +23,48 @@ const ClientList: React.FC<ClientListProps> = ({ user, onClientSelect }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewClientModal, setShowNewClientModal] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [newClientDescription, setNewClientDescription] = useState('');
+  const [creatingClient, setCreatingClient] = useState(false);
 
   useEffect(() => {
     loadClients();
   }, []);
 
   const loadClients = async () => {
-    // Mock data for now - will be replaced with Airtable integration
-    setTimeout(() => {
-      const mockClients: Client[] = [
-        {
-          id: '1',
-          name: 'Acme Corporation',
-          description: 'Main office and warehouse',
-          assetCount: 156,
-          lastScanDate: new Date('2024-01-15'),
-          status: 'active',
-          createdAt: new Date('2023-06-01'),
-        },
-        {
-          id: '2',
-          name: 'TechStart Inc.',
-          description: 'Startup with growing inventory',
-          assetCount: 45,
-          lastScanDate: new Date('2024-01-12'),
-          status: 'active',
-          createdAt: new Date('2023-08-15'),
-        },
-      ];
-      setClients(mockClients);
+    try {
+      if (window.electronAPI?.airtable) {
+        const result = await window.electronAPI.airtable.getCompanies();
+        
+        if (result.success && result.companies) {
+          const clientsData = result.companies.map((company: any) => ({
+            id: company.id,
+            name: company.name,
+            description: company.description || 'Asset tracking for ' + company.name,
+            assetCount: company.assetCount || 0,
+            lastScanDate: company.lastScanDate ? new Date(company.lastScanDate) : undefined,
+            status: company.isActive ? 'active' : 'inactive',
+            createdAt: company.createdAt ? new Date(company.createdAt) : new Date(),
+            tableName: company.tableName,
+            contactEmail: company.contactEmail,
+            contactPhone: company.contactPhone,
+          }));
+          
+          setClients(clientsData);
+        } else {
+          console.error('Failed to load companies:', result.error);
+          setClients([]);
+        }
+      } else {
+        console.warn('Airtable API not available');
+        setClients([]);
+      }
+    } catch (error) {
+      console.error('Error loading clients:', error);
+      setClients([]);
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   };
 
   const formatDate = (date: Date) => {
@@ -59,6 +73,40 @@ const ClientList: React.FC<ClientListProps> = ({ user, onClientSelect }) => {
       month: 'short',
       day: 'numeric',
     });
+  };
+
+  const handleCreateClient = async () => {
+    if (!newClientName.trim()) {
+      alert('Please enter a client name');
+      return;
+    }
+
+    setCreatingClient(true);
+    
+    try {
+      if (window.electronAPI?.airtable) {
+        const result = await window.electronAPI.airtable.createClientAssetTable(newClientName.trim());
+        
+        if (result.success) {
+          alert(`✅ Client "${newClientName}" created successfully!`);
+          setNewClientName('');
+          setNewClientDescription('');
+          setShowNewClientModal(false);
+          
+          // Reload the clients list to show the new client
+          await loadClients();
+        } else {
+          alert(`❌ Failed to create client: ${result.error}`);
+        }
+      } else {
+        alert('❌ Airtable API not available');
+      }
+    } catch (error) {
+      console.error('Error creating client:', error);
+      alert(`❌ Failed to create client: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setCreatingClient(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -223,11 +271,23 @@ const ClientList: React.FC<ClientListProps> = ({ user, onClientSelect }) => {
             <div className="modal-body">
               <div className="form-group">
                 <label className="form-label">Client Name</label>
-                <input type="text" className="form-input" placeholder="Enter client name" />
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Enter client name"
+                  value={newClientName}
+                  onChange={(e) => setNewClientName(e.target.value)}
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">Description</label>
-                <input type="text" className="form-input" placeholder="Optional description" />
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Optional description"
+                  value={newClientDescription}
+                  onChange={(e) => setNewClientDescription(e.target.value)}
+                />
               </div>
             </div>
             <div className="modal-footer">
@@ -237,8 +297,12 @@ const ClientList: React.FC<ClientListProps> = ({ user, onClientSelect }) => {
               >
                 Cancel
               </button>
-              <button className="btn btn-primary">
-                Create Client
+              <button 
+                className="btn btn-primary"
+                onClick={handleCreateClient}
+                disabled={creatingClient || !newClientName.trim()}
+              >
+                {creatingClient ? 'Creating...' : 'Create Client'}
               </button>
             </div>
           </div>

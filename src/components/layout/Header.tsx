@@ -4,10 +4,10 @@ import { User } from '../../types/auth';
 interface HeaderProps {
   user: User;
   onLogout: () => void;
-  onShowConfig?: () => void;
+  onShowSettings?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogout, onShowConfig }) => {
+const Header: React.FC<HeaderProps> = ({ user, onLogout, onShowSettings }) => {
   return (
     <header className="header">
       <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -32,9 +32,9 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout, onShowConfig }) => {
         }}>
           {user.role}
         </span>
-        {user.role === 'admin' && onShowConfig && (
+        {user.role === 'admin' && onShowSettings && (
           <button
-            onClick={onShowConfig}
+            onClick={onShowSettings}
             className="btn btn-secondary"
             style={{ fontSize: '12px', padding: '4px 12px' }}
           >

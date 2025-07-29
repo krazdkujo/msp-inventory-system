@@ -55,6 +55,14 @@ const electronAPI = {
       ipcRenderer.invoke('airtable:bulk-update-assets', data),
     createInitialTables: () => 
       ipcRenderer.invoke('airtable:create-initial-tables'),
+    createClientAssetTable: (clientName: string) => 
+      ipcRenderer.invoke('airtable:create-client-asset-table', { clientName }),
+    addFieldToTable: (tableName: string, fieldDefinition: any) => 
+      ipcRenderer.invoke('airtable:add-field-to-table', { tableName, fieldDefinition }),
+    updateTableName: (oldName: string, newName: string) => 
+      ipcRenderer.invoke('airtable:update-table-name', { oldName, newName }),
+    getCompanies: () => 
+      ipcRenderer.invoke('airtable:get-companies'),
   },
 
   // App information
